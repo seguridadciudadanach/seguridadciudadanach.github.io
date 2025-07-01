@@ -6,7 +6,7 @@
   <title>Registro de Ocurrencias</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- jsPDF + AutoTable para exportar -->
+  <!-- jsPDF + AutoTable para exportar PDF -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
 </head>
@@ -78,26 +78,78 @@
 
   <script>
     // -------------------------------------------------------------------
-    // ▸ Persistencia en LocalStorage
+    // ⚠️  CONFIGURA TUS CREDENCIALES DE GITHUB
+    // -------------------------------------------------------------------
+    // 1. Crea un token PAT en GitHub con scope "repo" (Settings → Developer settings → Tokens)
+    // 2. Reemplaza GITHUB_TOKEN con tu token (NO ES SEGURO dejarlo embebido en producción)
+    // 3. Define OWNER, REPO y FILE_PATH donde quedará el JSON de registros.
+    // -------------------------------------------------------------------
+    const GITHUB_TOKEN = "TU_TOKEN_AQUI";                 // 🔒
+    const OWNER        = "tu_usuario";                    // ej. "walterzare"
+    const REPO         = "registro-ocurrencias";         // repo destino
+    const FILE_PATH    = "data/occs.json";                // ruta dentro del repo
+
+    // -------------------------------------------------------------------
+    // ▸ Persistencia local (LocalStorage) + GitHub
     // -------------------------------------------------------------------
     const occs = JSON.parse(localStorage.getItem('occs') || '[]');
+
+    async function saveOccsToGitHub(jsonString) {
+      // Convierte a Base64 para API GitHub
+      const content = btoa(unescape(encodeURIComponent(jsonString)));
+      const url     = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
+
+      // Obtenemos SHA actual si el archivo ya existe
+      let sha = undefined;
+      const getResp = await fetch(url, {
+        headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
+      });
+      if (getResp.ok) {
+        const info = await getResp.json();
+        sha = info.sha;
+      }
+
+      const body = {
+        message: `Actualiza registros ${new Date().toISOString()}`,
+        content: content,
+        sha: sha
+      };
+
+      const resp = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `token ${GITHUB_TOKEN}`,
+          'Content-Type' : 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!resp.ok) {
+        console.error('Error guardando en GitHub:', await resp.text());
+      }
+    }
 
     // -------------------------------------------------------------------
     // ▸ Registrar nueva ocurrencia
     // -------------------------------------------------------------------
-    document.getElementById('occForm').addEventListener('submit', e => {
+    document.getElementById('occForm').addEventListener('submit', async e => {
       e.preventDefault();
 
       const occ = {
-        title: document.getElementById('title').value.trim(),
+        title      : document.getElementById('title').value.trim(),
         description: document.getElementById('description').value.trim(),
-        shift: document.getElementById('shift').value,
-        vehicle: document.getElementById('vehicle').value,
-        dateTime: new Date().toISOString()
+        shift      : document.getElementById('shift').value,
+        vehicle    : document.getElementById('vehicle').value,
+        dateTime   : new Date().toISOString()
       };
 
       occs.push(occ);
       localStorage.setItem('occs', JSON.stringify(occs));
+
+      // Guarda también en GitHub (ignora errores silenciosamente)
+      try {
+        await saveOccsToGitHub(JSON.stringify(occs, null, 2));
+      } catch(e) { console.warn('No se pudo guardar en GitHub', e); }
 
       e.target.reset();
       document.getElementById('msg').classList.remove('hidden');
@@ -108,9 +160,9 @@
     // ▸ Filtrado de registros
     // -------------------------------------------------------------------
     function getFiltered() {
-      const from = document.getElementById('filterFrom').value;
-      const to   = document.getElementById('filterTo').value;
-      const shift= document.getElementById('filterShift').value;
+      const from  = document.getElementById('filterFrom').value;
+      const to    = document.getElementById('filterTo').value;
+      const shift = document.getElementById('filterShift').value;
 
       return occs.filter(o => {
         const d = o.dateTime.slice(0, 10); // YYYY-MM-DD
@@ -118,7 +170,7 @@
         if (to   && d > to)   return false;
         if (shift && o.shift !== shift) return false;
         return true;
-      }).sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime)); // más recientes primero
+      }).sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
     }
 
     // -------------------------------------------------------------------
@@ -127,7 +179,6 @@
     document.getElementById('btnFilter').addEventListener('click', () => {
       const filtered = getFiltered();
 
-      // Construir filas HTML
       const rows = filtered.map(o => `
         <tr>
           <td class="border px-2 py-1 whitespace-nowrap">${o.dateTime.replace('T', ' ').slice(0, 16)}</td>
@@ -163,7 +214,6 @@
         </body>
         </html>`;
 
-      // Abrir reporte en una nueva pestaña/ventana
       const win = window.open('', '_blank');
       win.document.write(reportHTML);
       win.document.close();
@@ -191,7 +241,7 @@
         head: [['Fecha', 'Turno', 'Móvil', 'Título', 'Descripción']],
         body: data,
         styles: { fontSize: 8 },
-        headStyles: { fillColor: [229, 231, 235] } // gris Tailwind bg-gray-200
+        headStyles: { fillColor: [229, 231, 235] }
       });
 
       doc.save('reporte_ocurrencias.pdf');
