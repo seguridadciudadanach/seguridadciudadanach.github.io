@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Registro de Ocurrencias</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- jsPDF + AutoTable para exportar -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-900 min-h-screen">
+  <div class="max-w-xl mx-auto p-4">
+    <h1 class="text-2xl font-bold mb-4 text-center">Registro de Ocurrencias — Seguridad Ciudadana Chepén</h1>
+
+    <!-- ▸ Formulario de registro -->
+    <form id="occForm" class="bg-white p-4 rounded shadow space-y-4">
+      <div>
+        <label class="block font-semibold">Título</label>
+        <input type="text" id="title" required class="w-full mt-1 p-2 border rounded" placeholder="Ej. Robo frustrado" />
+      </div>
+      <div>
+        <label class="block font-semibold">Descripción</label>
+        <textarea id="description" required rows="3" class="w-full mt-1 p-2 border rounded" placeholder="Detalles..."></textarea>
+      </div>
+      <div>
+        <label class="block font-semibold">Turno</label>
+        <select id="shift" class="w-full mt-1 p-2 border rounded">
+          <option value="Mañana">Mañana</option>
+          <option value="Tarde">Tarde</option>
+          <option value="Noche">Noche</option>
+        </select>
+      </div>
+      <div>
+        <label class="block font-semibold">Móvil de apoyo</label>
+        <select id="vehicle" class="w-full mt-1 p-2 border rounded">
+          <option value="Unidad 102">Unidad 102</option>
+          <option value="Unidad 103">Unidad 103</option>
+          <option value="Unidad 106">Unidad 106</option>
+          <option value="Unidad 107">Unidad 107</option>
+          <option value="Motorizado 04">Motorizado 04</option>
+        </select>
+      </div>
+      <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded">Registrar</button>
+      <p id="msg" class="text-green-600 font-semibold hidden">¡Registrado correctamente!</p>
+    </form>
+
+    <!-- ▸ Sección de filtros y acciones de reporte -->
+    <div class="bg-white mt-8 p-4 rounded shadow">
+      <h2 class="text-xl font-bold mb-2">Reporte de Ocurrencias</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+        <div>
+          <label>Desde</label>
+          <input type="date" id="filterFrom" class="w-full mt-1 p-2 border rounded" />
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" id="filterTo" class="w-full mt-1 p-2 border rounded" />
+        </div>
+        <div>
+          <label>Turno</label>
+          <select id="filterShift" class="w-full mt-1 p-2 border rounded">
+            <option value="">Todos</option>
+            <option value="Mañana">Mañana</option>
+            <option value="Tarde">Tarde</option>
+            <option value="Noche">Noche</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <button id="btnFilter" class="bg-emerald-600 text-white px-4 py-2 rounded">Ver reporte</button>
+        <button id="btnPDF" class="bg-indigo-600 text-white px-4 py-2 rounded">Exportar PDF</button>
+        <button id="btnClear" class="bg-red-600 text-white px-4 py-2 rounded">Limpiar todo</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // -------------------------------------------------------------------
+    // ▸ Persistencia en LocalStorage
+    // -------------------------------------------------------------------
+    const occs = JSON.parse(localStorage.getItem('occs') || '[]');
+
+    // -------------------------------------------------------------------
+    // ▸ Registrar nueva ocurrencia
+    // -------------------------------------------------------------------
+    document.getElementById('occForm').addEventListener('submit', e => {
+      e.preventDefault();
+
+      const occ = {
+        title: document.getElementById('title').value.trim(),
+        description: document.getElementById('description').value.trim(),
+        shift: document.getElementById('shift').value,
+        vehicle: document.getElementById('vehicle').value,
+        dateTime: new Date().toISOString()
+      };
+
+      occs.push(occ);
+      localStorage.setItem('occs', JSON.stringify(occs));
+
+      e.target.reset();
+      document.getElementById('msg').classList.remove('hidden');
+      setTimeout(() => document.getElementById('msg').classList.add('hidden'), 2000);
+    });
+
+    // -------------------------------------------------------------------
+    // ▸ Filtrado de registros
+    // -------------------------------------------------------------------
+    function getFiltered() {
+      const from = document.getElementById('filterFrom').value;
+      const to   = document.getElementById('filterTo').value;
+      const shift= document.getElementById('filterShift').value;
+
+      return occs.filter(o => {
+        const d = o.dateTime.slice(0, 10); // YYYY-MM-DD
+        if (from && d < from) return false;
+        if (to   && d > to)   return false;
+        if (shift && o.shift !== shift) return false;
+        return true;
+      }).sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime)); // más recientes primero
+    }
+
+    // -------------------------------------------------------------------
+    // ▸ Mostrar reporte en nueva ventana
+    // -------------------------------------------------------------------
+    document.getElementById('btnFilter').addEventListener('click', () => {
+      const filtered = getFiltered();
+
+      // Construir filas HTML
+      const rows = filtered.map(o => `
+        <tr>
+          <td class="border px-2 py-1 whitespace-nowrap">${o.dateTime.replace('T', ' ').slice(0, 16)}</td>
+          <td class="border px-2 py-1">${o.shift}</td>
+          <td class="border px-2 py-1">${o.vehicle}</td>
+          <td class="border px-2 py-1">${o.title}</td>
+          <td class="border px-2 py-1">${o.description}</td>
+        </tr>`).join('');
+
+      const reportHTML = `<!DOCTYPE html>
+        <html lang="es">
+        <head>
+          <meta charset="UTF-8" />
+          <title>Reporte de Ocurrencias</title>
+          <link href="https://cdn.tailwindcss.com" rel="stylesheet">
+        </head>
+        <body class="p-4 text-sm">
+          <h1 class="text-xl font-bold mb-4 text-center">Reporte de Ocurrencias</h1>
+          <table class="min-w-full border">
+            <thead class="bg-gray-200">
+              <tr>
+                <th class="border px-2 py-1">Fecha</th>
+                <th class="border px-2 py-1">Turno</th>
+                <th class="border px-2 py-1">Móvil</th>
+                <th class="border px-2 py-1">Título</th>
+                <th class="border px-2 py-1">Descripción</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows || '<tr><td colspan="5" class="text-center p-4">Sin resultados</td></tr>'}
+            </tbody>
+          </table>
+        </body>
+        </html>`;
+
+      // Abrir reporte en una nueva pestaña/ventana
+      const win = window.open('', '_blank');
+      win.document.write(reportHTML);
+      win.document.close();
+    });
+
+    // -------------------------------------------------------------------
+    // ▸ Exportar a PDF (misma data filtrada)
+    // -------------------------------------------------------------------
+    document.getElementById('btnPDF').addEventListener('click', () => {
+      const filtered = getFiltered();
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      const data = filtered.map(o => [
+        o.dateTime.replace('T', ' ').slice(0, 16),
+        o.shift,
+        o.vehicle,
+        o.title,
+        o.description
+      ]);
+
+      doc.text('Reporte de Ocurrencias', 14, 15);
+      doc.autoTable({
+        startY: 20,
+        head: [['Fecha', 'Turno', 'Móvil', 'Título', 'Descripción']],
+        body: data,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [229, 231, 235] } // gris Tailwind bg-gray-200
+      });
+
+      doc.save('reporte_ocurrencias.pdf');
+    });
+
+    // -------------------------------------------------------------------
+    // ▸ Limpiar registros
+    // -------------------------------------------------------------------
+    document.getElementById('btnClear').addEventListener('click', () => {
+      if (confirm('¿Eliminar todos los registros?')) {
+        localStorage.removeItem('occs');
+        occs.length = 0;
+        alert('Registros eliminados.');
+      }
+    });
+  </script>
+</body>
+</html>
