@@ -80,52 +80,79 @@
     // -------------------------------------------------------------------
     // ⚠️  CONFIGURA TUS CREDENCIALES DE GITHUB
     // -------------------------------------------------------------------
-    // 1. Crea un token PAT en GitHub con scope "repo" (Settings → Developer settings → Tokens)
-    // 2. Reemplaza GITHUB_TOKEN con tu token (NO ES SEGURO dejarlo embebido en producción)
-    // 3. Define OWNER, REPO y FILE_PATH donde quedará el JSON de registros.
-    // -------------------------------------------------------------------
-    const GITHUB_TOKEN = "TU_TOKEN_AQUI";                 // 🔒
-    const OWNER        = "tu_usuario";                    // ej. "walterzare"
-    const REPO         = "registro-ocurrencias";         // repo destino
-    const FILE_PATH    = "data/occs.json";                // ruta dentro del repo
+    const GITHUB_TOKEN = "TU_TOKEN_AQUI";          // 🔒 PAT con scope repo
+    const OWNER        = "tu_usuario";            // ej. "walterzare"
+    const REPO         = "registro-ocurrencias";  // repo destino
+    const FILE_PATH    = "data/occs.json";        // ruta dentro del repo
+    const BRANCH       = "main";                  // rama (main o master)
 
     // -------------------------------------------------------------------
-    // ▸ Persistencia local (LocalStorage) + GitHub
+    // ▸ Persistencia local + estructura in‑memory
     // -------------------------------------------------------------------
     const occs = JSON.parse(localStorage.getItem('occs') || '[]');
 
+    // -------------------------------------------------------------------
+    // ▸ Sincronizar ► DESCARGAR registros de GitHub al iniciar la página
+    // -------------------------------------------------------------------
+    async function loadOccsFromGitHub() {
+      const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}?ref=${BRANCH}`;
+      try {
+        const resp = await fetch(url, {
+          headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
+        });
+        if (!resp.ok) return; // si no existe el archivo, simplemente no hace nada
+        const info = await resp.json();
+        const jsonStr = decodeURIComponent(escape(atob(info.content)));
+        const data = JSON.parse(jsonStr);
+
+        // Reemplazamos contenido manteniendo referencia (occs es const)
+        occs.length = 0;
+        occs.push(...data);
+        localStorage.setItem('occs', JSON.stringify(occs));
+      } catch (e) {
+        console.warn('No se pudieron obtener registros desde GitHub', e);
+      }
+    }
+
+    // Ejecutar de inmediato
+    loadOccsFromGitHub();
+
+    // -------------------------------------------------------------------
+    // ▸ Sincronizar ► SUBIR registros a GitHub
+    // -------------------------------------------------------------------
     async function saveOccsToGitHub(jsonString) {
-      // Convierte a Base64 para API GitHub
       const content = btoa(unescape(encodeURIComponent(jsonString)));
       const url     = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${FILE_PATH}`;
 
-      // Obtenemos SHA actual si el archivo ya existe
-      let sha = undefined;
-      const getResp = await fetch(url, {
-        headers: { 'Authorization': `token ${GITHUB_TOKEN}` }
-      });
-      if (getResp.ok) {
-        const info = await getResp.json();
-        sha = info.sha;
-      }
+      // Obtener SHA si existe
+      let sha;
+      try {
+        const getResp = await fetch(url, { headers: { 'Authorization': `token ${GITHUB_TOKEN}` } });
+        if (getResp.ok) {
+          const info = await getResp.json();
+          sha = info.sha;
+        }
+      } catch {}
 
       const body = {
         message: `Actualiza registros ${new Date().toISOString()}`,
         content: content,
-        sha: sha
+        sha: sha,
+        branch: BRANCH
       };
 
-      const resp = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `token ${GITHUB_TOKEN}`,
-          'Content-Type' : 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!resp.ok) {
-        console.error('Error guardando en GitHub:', await resp.text());
+      try {
+        const resp = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `token ${GITHUB_TOKEN}`,
+            'Content-Type' : 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+        if (!resp.ok) console.error('Error guardando en GitHub:', await resp.text());
+      } catch (e) {
+        console.error('Error red subiendo a GitHub:', e);
       }
     }
 
@@ -146,10 +173,8 @@
       occs.push(occ);
       localStorage.setItem('occs', JSON.stringify(occs));
 
-      // Guarda también en GitHub (ignora errores silenciosamente)
-      try {
-        await saveOccsToGitHub(JSON.stringify(occs, null, 2));
-      } catch(e) { console.warn('No se pudo guardar en GitHub', e); }
+      // Subir a GitHub (no bloquea UI)
+      saveOccsToGitHub(JSON.stringify(occs, null, 2));
 
       e.target.reset();
       document.getElementById('msg').classList.remove('hidden');
@@ -165,12 +190,12 @@
       const shift = document.getElementById('filterShift').value;
 
       return occs.filter(o => {
-        const d = o.dateTime.slice(0, 10); // YYYY-MM-DD
+        const d = o.dateTime.slice(0, 10);
         if (from && d < from) return false;
         if (to   && d > to)   return false;
         if (shift && o.shift !== shift) return false;
         return true;
-      }).sort((a, b) => new Date(b.dateTime) - new Date(a.dateTime));
+      }).sort((a,b) => new Date(b.dateTime) - new Date(a.dateTime));
     }
 
     // -------------------------------------------------------------------
@@ -178,10 +203,9 @@
     // -------------------------------------------------------------------
     document.getElementById('btnFilter').addEventListener('click', () => {
       const filtered = getFiltered();
-
       const rows = filtered.map(o => `
         <tr>
-          <td class="border px-2 py-1 whitespace-nowrap">${o.dateTime.replace('T', ' ').slice(0, 16)}</td>
+          <td class="border px-2 py-1 whitespace-nowrap">${o.dateTime.replace('T',' ').slice(0,16)}</td>
           <td class="border px-2 py-1">${o.shift}</td>
           <td class="border px-2 py-1">${o.vehicle}</td>
           <td class="border px-2 py-1">${o.title}</td>
@@ -189,22 +213,22 @@
         </tr>`).join('');
 
       const reportHTML = `<!DOCTYPE html>
-        <html lang="es">
+        <html lang=\"es\">
         <head>
-          <meta charset="UTF-8" />
+          <meta charset=\"UTF-8\" />
           <title>Reporte de Ocurrencias</title>
-          <link href="https://cdn.tailwindcss.com" rel="stylesheet">
+          <link href=\"https://cdn.tailwindcss.com\" rel=\"stylesheet\">
         </head>
-        <body class="p-4 text-sm">
-          <h1 class="text-xl font-bold mb-4 text-center">Reporte de Ocurrencias</h1>
-          <table class="min-w-full border">
-            <thead class="bg-gray-200">
+        <body class=\"p-4 text-sm\">
+          <h1 class=\"text-xl font-bold mb-4 text-center\">Reporte de Ocurrencias</h1>
+          <table class=\"min-w-full border\">
+            <thead class=\"bg-gray-200\">
               <tr>
-                <th class="border px-2 py-1">Fecha</th>
-                <th class="border px-2 py-1">Turno</th>
-                <th class="border px-2 py-1">Móvil</th>
-                <th class="border px-2 py-1">Título</th>
-                <th class="border px-2 py-1">Descripción</th>
+                <th class=\"border px-2 py-1\">Fecha</th>
+                <th class=\"border px-2 py-1\">Turno</th>
+                <th class=\"border px-2 py-1\">Móvil</th>
+                <th class=\"border px-2 py-1\">Título</th>
+                <th class=\"border px-2 py-1\">Descripción</th>
               </tr>
             </thead>
             <tbody>
@@ -222,41 +246,4 @@
     // -------------------------------------------------------------------
     // ▸ Exportar a PDF (misma data filtrada)
     // -------------------------------------------------------------------
-    document.getElementById('btnPDF').addEventListener('click', () => {
-      const filtered = getFiltered();
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF();
-
-      const data = filtered.map(o => [
-        o.dateTime.replace('T', ' ').slice(0, 16),
-        o.shift,
-        o.vehicle,
-        o.title,
-        o.description
-      ]);
-
-      doc.text('Reporte de Ocurrencias', 14, 15);
-      doc.autoTable({
-        startY: 20,
-        head: [['Fecha', 'Turno', 'Móvil', 'Título', 'Descripción']],
-        body: data,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [229, 231, 235] }
-      });
-
-      doc.save('reporte_ocurrencias.pdf');
-    });
-
-    // -------------------------------------------------------------------
-    // ▸ Limpiar registros
-    // -------------------------------------------------------------------
-    document.getElementById('btnClear').addEventListener('click', () => {
-      if (confirm('¿Eliminar todos los registros?')) {
-        localStorage.removeItem('occs');
-        occs.length = 0;
-        alert('Registros eliminados.');
-      }
-    });
-  </script>
-</body>
-</html>
+    document.getElementById('btnPDF').addEventListener('
